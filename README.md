@@ -6,14 +6,14 @@ Sensor data and daily averages are transmitted to the ThingSpeak cloud platform 
 
 # Components Used
 
- ESP8266 NodeMCU 
- Soil Moisture Sensor 
- pH Sensor 
- Water Flow Sensor
- Relay Module
- Solenoidal valve
- Jumper Wires
- Power Supply
+ -ESP8266 NodeMCU 
+ -Soil Moisture Sensor 
+ -pH Sensor 
+ -Water Flow Sensor
+ -Relay Module
+ -Solenoidal valve
+ -Jumper Wires
+ -Power Supply
 
 # System Architecture
 
