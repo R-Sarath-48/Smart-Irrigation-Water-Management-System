@@ -1,0 +1,155 @@
+#include <ESP8266WiFi.h>
+#include <SoftwareSerial.h>
+
+#define FLOW_SENSOR D4
+#define RELAY D2
+#define DRY_SOIL 900
+#define WET_SOIL 300
+
+const char* ssid = "//";
+const char* password = "//";
+const char* server = "api.thingspeak.com";
+String apiKey = "9Y2ZEIHELXD2MR5C";
+
+SoftwareSerial phSerial(D6, D5);
+volatile int flowPulseCount = 0;
+
+WiFiClient client;
+float totalMoisture = 0;
+float totalPH = 0;
+float totalFlow = 0;
+int readingCount = 0;
+
+unsigned long lastResetTime = 0;
+const unsigned long oneDay = 86400000; // 24 hrs
+
+void IRAM_ATTR flowPulse() {
+  flowPulseCount++;
+}
+
+void setup() {
+  Serial.begin(9600);
+  phSerial.begin(9600);
+
+  pinMode(FLOW_SENSOR, INPUT);
+  pinMode(RELAY, OUTPUT);
+
+  digitalWrite(RELAY, HIGH); // Relay OFF (Active LOW)
+
+  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR), flowPulse, RISING);
+
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nConnected!");
+
+  lastResetTime = millis();
+}
+
+
+void loop() {
+
+  int soilValue = analogRead(A0);
+  int moisture = map(soilValue, WET_SOIL, DRY_SOIL, 0, 100);
+  moisture = constrain(moisture, 0, 100);
+
+  Serial.print("Soil Moisture: ");
+  Serial.println(moisture);
+
+  delay(2000); // stabilize
+  float phValue = 0;
+
+  if (phSerial.available()) {
+    String data = phSerial.readStringUntil('\n');
+    int index = data.indexOf("PH:");
+    if (index != -1) {
+      phValue = data.substring(index + 3).toFloat();
+    }
+  }
+
+  Serial.print("pH Value: ");
+  Serial.println(phValue);
+
+  // -------- RELAY LOGIC --------
+  bool relayState = false;
+
+  if (moisture < 30) {
+    if (phValue >= 6 && phValue <= 9) {
+      digitalWrite(RELAY, LOW);   // ON
+      relayState = true;
+      Serial.println("Relay ON (Soil Dry + Safe pH)");
+    } else {
+      digitalWrite(RELAY, HIGH);  // OFF
+      Serial.println("Relay OFF (pH Unsafe)");
+    }
+  } else {
+    digitalWrite(RELAY, HIGH);    // OFF
+    Serial.println("Relay OFF (Soil Wet)");
+  }
+
+  float flowPerHour = 0;
+
+  if (relayState) {
+    flowPulseCount = 0;
+    delay(1000); // measure 1 sec
+
+    float flowRate = flowPulseCount / 7.5; // L/min
+    flowPerHour = flowRate * 60;
+
+    Serial.print("Flow (L/hr): ");
+    Serial.println(flowPerHour);
+  } else {
+    Serial.println("No Flow (Relay OFF)");
+  }
+
+  totalMoisture += moisture;
+  totalPH += phValue;
+  totalFlow += flowPerHour;
+  readingCount++;
+
+  float avgMoisture = totalMoisture / readingCount;
+  float avgPH = totalPH / readingCount;
+  float avgFlow = totalFlow / readingCount;
+
+  if (client.connect(server, 80)) {
+
+    String url = "/update?api_key=" + apiKey;
+    url += "&field1=" + String(moisture);
+    url += "&field2=" + String(phValue);
+    url += "&field3=" + String(flowPerHour);
+    url += "&field4=" + String(avgMoisture);
+    url += "&field5=" + String(avgPH);
+    url += "&field6=" + String(avgFlow);
+
+    client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+                 "Host: " + server + "\r\n" +
+                 "Connection: close\r\n\r\n");
+
+    Serial.println("Data sent to ThingSpeak");
+  }
+
+  client.stop();
+
+  if (millis() - lastResetTime >= oneDay) {
+    totalMoisture = 0;
+    totalPH = 0;
+    totalFlow = 0;
+    readingCount = 0;
+    lastResetTime = millis();
+
+    Serial.println("Daily data reset!");
+  }
+
+  Serial.println("------ DATA ------");
+  Serial.print("Avg Moisture: "); Serial.println(avgMoisture);
+  Serial.print("Avg pH: "); Serial.println(avgPH);
+  Serial.print("Avg Flow: "); Serial.println(avgFlow);
+  Serial.println("------------------");
+
+  delay(15000); // ThingSpeak delay
+}
